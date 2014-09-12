@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	Build file for Webrtcall
+	Author:	chengesheng				$Date:	2013-12-03
+-->
+<project name="webrtcall" basedir="." default="simplewar">
+	<!-- properties files -->
+	<property file="${basedir}/build.properties" />
+
+	<property name="project" value="${basedir}" />
+	<property name="project.web" value="${project}/webapp" />
+	<property name="project.web-inf" value="${project.web}/WEB-INF" />
+	<property name="project.web-inf.lib" value="${project.web-inf}/lib" />
+	<property name="project.web-inf.classes" value="${project.web-inf}/classes" />
+
+	<!-- dist dir, the target dir -->
+	<property name="dist.dir" value="${basedir}/dist" />
+
+	<!-- project war file name -->
+	<property name="project.warfile.name" value="${project.distname}.war" />
+
+	<!-- src dirs -->
+	<property name="src.dir" value="${basedir}/src" />
+
+	<property environment="env" />
+
+	<path id="base.path">
+		<pathelement path="${classpath}" />
+		<fileset dir="${project.web-inf.lib}">
+			<include name="**/*.jar" />
+		</fileset>
+		<pathelement location="${project.web-inf.classes}" />
+	</path>
+
+	<!-- useful shortcuts -->
+	<patternset id="meta.files">
+		<exclude name="**/CVS/*" />
+		<exclude name="**/.svn/*" />
+		<include name="**/*.xml" />
+		<include name="**/*.properties" />
+	</patternset>
+
+	<!-- prepare -->
+	<target name="prepare">
+		<delete dir="${dist.dir}" />
+		<delete dir="${project.web-inf.classes}" />
+		<mkdir dir="${dist.dir}" />
+		<mkdir dir="${project.web-inf.classes}" />
+	</target>
+
+	<!-- compile java src files into class files -->
+	<target name="javac" depends="prepare">
+		<javac destdir="${project.web-inf.classes}" debug="on" encoding="utf-8">
+			<src path="${src.dir}" />
+			<classpath refid="base.path" />
+		</javac>
+	</target>
+	
+	<!-- copy properties and xml files into the dest dir -->
+	<target name="copy-meta-files">
+		<copy todir="${project.web-inf.classes}" includeEmptyDirs="no">
+			<fileset dir="${src.dir}">
+				<patternset refid="meta.files" />
+			</fileset>
+		</copy>
+	</target>
+
+	<target name="war" depends="javac, copy-meta-files">
+		<delete dir="${dist.dir}" />
+		<mkdir dir="${dist.dir}" />
+		<war basedir="${project.web}" warfile="${dist.dir}/${project.warfile.name}" webxml="${project.web-inf}/web.xml" />
+	</target>
+
+	<target name="simplewar">
+		<delete dir="${dist.dir}" />
+		<mkdir dir="${dist.dir}" />
+		<war basedir="${project.web}" warfile="${dist.dir}/${project.warfile.name}" webxml="${project.web-inf}/web.xml" />
+	</target>
+
+</project>

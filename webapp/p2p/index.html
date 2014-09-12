@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>WebRTC Demo</title>
+<script type="text/javascript" src="jquery-min.js"></script>
+<link rel="stylesheet" href="bootstrap.css"/> 
+</head>
+<style>
+body,button, input, select, textarea,pre /* for ie */ {
+    font: 12px/1.5 tahoma, arial, \5FAE\8F6F\96C5\9ED1,\5B8B\4F53 sans-serif; 
+}
+
+.form-signin {
+    background-color: #FFFFFF;
+    border: 0px solid #E5E5E5;
+    border-radius: 5px 5px 5px 5px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    margin: 40px auto 20px;
+    max-width: 500px;
+    padding: 19px 29px 29px;
+}
+
+.loginPage input.name{
+	font-size:16px;
+	padding:10px;
+	margin:10px 0;
+}
+
+.loginDiv {
+	margin:10px 0;
+}
+
+.main{
+	width:1000px;
+	margin:20px auto;
+}
+.nav-header {
+	font-size:14px;
+}
+
+.callList li a{
+	float:right;
+	padding: 0 5px;
+	cursor:pointer;
+	
+}
+.callList li.warn a{
+	color:#C09853;
+}
+.callList.calling li a{
+	display:none;
+}
+
+.callList li{
+	line-height:20px;
+}
+
+</style>
+<script type="text/javascript">
+<!--
+function get_appropriate_ws_url() {
+	var pcol;
+	var u = document.URL;
+
+	/*
+	 * We open the websocket encrypted if this page came on an
+	 * https:// url itself, otherwise unencrypted
+	 */
+
+	if (u.substring(0, 5) == "https") {
+		pcol = "wss://";
+		u = u.substr(8);
+	} else {
+		pcol = "ws://";
+		if (u.substring(0, 4) == "http")
+			u = u.substr(7);
+	}
+
+	u = u.split('/');
+
+	return pcol + u[0];
+}
+
+
+var localClient,localStream,localVideo,remoteVideo,RemoteStore;
+var wsServer = get_appropriate_ws_url() + '/p2p.do';
+var iceServer = null;
+
+
+
+$(function(){
+	init();
+//alert(wsServer);
+})
+
+function printf(msg){
+	console.log(msg);
+}
+
+function init(){
+	localVideo = document.getElementById("localVideo"); //本地视频
+	remoteVideo = document.getElementById("remoteVideo"); //远程接收视频
+
+	
+	CheckClinet.init(function(){
+		initLogin();
+	});
+	initEvent();
+
+}
+
+function initEvent(){
+	$('.loginPage .name').keydown(function(event){
+		if(event.keyCode==13) {
+			 $('.btnLogin').click()
+		 }
+	});
+
+	$(".btnLogin").click(function(){
+		var name = $(".loginDiv .name").val();
+		if($.trim(name) == ""){
+			alert("用户名不能为空！");
+			return false;
+		}
+
+		MySocket.connect(name);
+	})
+
+	$(".hang").click(function(){
+		Rtc.hang();
+	})
+
+	$(".btnLogout").click(function(){
+		MySocket.close();
+		PageView.setToLogin();
+	})
+
+	$('#writeMsg').keydown(function(event){
+		if(event.keyCode==13) {
+			   sendMsg()
+		 }
+	});
+}
+
+function initLogin(){
+	$(".loginDiv").show(200,function(){
+		$(".loginPage .name").focus();
+	});
+	
+
+}
+
+function Client(data){
+	this.id;
+	this.name;
+	this.busy = false;
+	this.browser;
+	this.ip;
+	$.extend(this,data)
+}
+
+
+var MySocket = {
+	isOpen:false,
+	connect:function(name){
+		this.isOpen = false;
+		websocket = new WebSocket(wsServer+'?name='+name+'&browser='+Utils.getBrowser());
+		websocket.onopen = this.onopen; 
+		websocket.onclose = this.onclose;
+		websocket.onmessage = this.onmessage;
+		websocket.onerror = this.onerror;
+		this.websocket = websocket;
+	},
+	onopen:function(evt){
+		this.isOpen = true;
+		PageView.setToMain();
+		startLocalVideo();
+	},
+	onclose:function(evt){
+		printf(evt);
+		PageView.setToLogin();
+	},
+	onerror:function(evt){
+		printf(evt);
+		if(!MySocket.isOpen){
+			alert("WebSocket服务器连接失败，请联系管理员！")
+			return;
+		}
+		alert("WebSocket服务器连接已停止，请联系管理员！");
+		PageView.setToLogin();
+	},
+	onmessage:function(evt){
+		var obj = JSON.parse(evt.data);
+		var type = obj.type;
+		MessageCallback[type] && MessageCallback[type](obj);
+	},
+
+	send:function(msg){
+		if(typeof(msg) != "string"){
+			msg = JSON.stringify(msg);
+		}
+		MySocket.websocket.send(msg);
+	},
+	close:function(){
+		this.websocket.close();
+	}
+
+}
+
+//-----------------------------------
+function startLocalVideo(){
+	var stream = localStream;
+	setVideo(localVideo,stream);
+}
+
+function stopLocalVideo(){
+	localVideo.src="";
+}
+
+function setVideo(video,stream){
+	if (video.mozSrcObject !== undefined) {
+		video.mozSrcObject = stream;
+	} else {
+		video.src = (window.URL && window.URL.createObjectURL(stream)) || stream;
+	};
+	video.play();
+}
+//-----------------------------------
+var LocalInfo = {
+	set:function(data){
+		var info = $(".localInfo");
+		$(".name",info).text(data.name);
+		$(".ip",info).text(data.ip);
+		$(".browser",info).text(data.browser);
+		if(data.busy){
+			setStateMessage("服务器忙");
+			Rtc.setCall();
+		}else{
+			setStateMessage("可通话");
+		}
+	},
+
+	clear:function(){
+		var info = $(".localInfo");
+		$(".name",info).text("加载中..");
+		$(".ip",info).text("加载中..");
+		$(".browser",info).text("加载中..");
+		setStateMessage("加载中..");
+	}
+}
+
+//-----------------------------------
+var MessageCallback = {
+	isHang:false,
+	info:function(t){
+		localClient = new Client(t.data);
+		LocalInfo.set(localClient);
+	},
+
+	list:function(t){
+		List.load(t.data);
+	},
+	add:function(t){
+		List.add(t.data);
+	},
+	remove:function(t){
+		if(Rtc.remoteId == t.data.id){
+			alert("对方已离线");
+			Rtc.hang();
+		}
+
+		List.remove(t.data);
+	},
+	updataBusy:function(t){
+		var data = t.data;
+		if(localClient.id == data.id){
+			return;
+		}
+		List.busy(data);
+	},
+
+	error:function(t){
+		var msg = t.data;
+		alert(msg);
+		Rtc.setHang();
+	},
+ 
+	//被对方呼叫
+	beCall:function(t){
+		var data = t.data;
+		var remoteUser = data.name;
+		var id = data.id;
+		setStateMessage("正在连接...");
+		Rtc.setCall();
+		if(confirm(remoteUser+"正在呼叫，是否应答？")){
+			if(this.isHang){
+				this.isHang =false;
+				return;
+			}
+
+			Rtc.remoteId = id;
+			MySocket.send({"cmd":"passCall","remoteId":id});	
+		}else{
+			if(this.isHang){
+				this.isHang =false;
+				return;
+			}
+			MySocket.send({"cmd":"rejectCall","remoteId":id});
+			Rtc.setHang();
+		}
+
+	},
+
+	//对方同意进行呼叫
+	passCall:function(t){
+		setStateMessage("正在连接...");
+		var conn = new Connection(Rtc.remoteId,remoteVideo);
+		conn.createOffer();
+	},
+	//对方拒绝呼叫
+	rejectCall:function(t){
+		alert("对方拒绝请求");
+		Rtc.setHang();
+	},
+
+	finishCall:function(t){
+		setStateMessage("通话中");
+		localVideo.volume = 0;
+		remoteVideo.volume = 1;
+	},
+
+
+	//被挂断
+	beHang:function(t){
+		this.isHang = true;
+		alert("对方已挂断");
+		Rtc.setHang();
+	},
+
+	//接收对方呼叫请求
+	offer:function(t){
+		var offer = t.data;
+		setStateMessage("正在连接...");
+		var conn = new Connection(Rtc.remoteId,remoteVideo);
+		conn.createAnswer(offer);
+	},
+
+	answer:function(t){
+		var answer = t.data;
+		setStateMessage("通话中");
+		ConnStore[Rtc.remoteId].setRemoteDescription(new RTCSessionDescription(answer));
+		MySocket.send({"cmd":"finishCall","remoteId":Rtc.remoteId});
+		localVideo.volume = 0;
+		remoteVideo.volume = 1;
+	},
+
+	candidate:function(t){
+		var candidate = t.data;
+		ConnStore[Rtc.remoteId].addIceCandidate(new RTCIceCandidate(candidate));
+	},
+
+	text:function(t){
+		showMsg(t.data);
+	}
+	
+
+
+}
+
+var List = {
+	load:function(data){
+		this.clear();
+		$(data).each(function(i,o){
+			List.add(o);
+		})
+		
+	},
+	clear:function(){
+		$(".callList").empty();
+		$(".busyList").empty();
+	},
+	add:function(data){
+		var li;
+		if(data.busy == true){
+			li = $("'<li id='"+data.id+"'><span>"+data.name+"</span></li>");
+			$(".busyList").append(li);
+		}else{
+			li = $("<li id='"+data.id+"'><span>"+data.name+"</span><a onclick='Rtc.call(this)'>呼叫</a></li>");
+			if(localClient.browser != data.browser){
+				li.addClass("warn");
+			}
+
+
+			$(".callList").append(li);
+		}
+		li.data("data",data);
+	},
+	remove:function(data){
+		printf($("#"+data.id))
+		$("#"+data.id).remove();
+	},
+	busy:function(data){
+		this.remove(data);
+		this.add(data);
+	}
+}
+
+//------------------------------------
+
+var PageView = {
+	setToLogin:function(){
+		$(".loginPage").show();
+		$(".main").hide();
+		$(".loginPage .name").focus();
+		List.clear();
+		LocalInfo.clear();
+		stopLocalVideo();
+		this.setToHang();
+		
+	},
+
+	setToMain:function(){
+		$('#showMsg').val("");
+		$(".loginPage").hide();
+		$(".main").show();
+
+		$('#writeMsg').focus()
+	},
+
+	setToCall:function(){
+		$(".callList").addClass("calling");
+		$(".hang").show();
+	},
+
+	setToHang:function(){
+		$(".callList").removeClass("calling");
+		$(".hang").hide();
+		
+	}
+
+}
+
+
+//-------------------------------------
+var CheckClinet = {
+	init:function(callback){
+		this.c = 0;
+		this.browser();
+		this.websocket();
+		this.webrtc();
+		this.video();
+		this.callback = callback;
+	},
+
+	setCount:function(){
+		this.c += 1;
+
+		if(this.c == 4){
+			this.callback();
+		};
+	},
+	browser:function(){
+		var msg = "正在检测...";
+		var browser = Utils.getBrowser();
+		var dom = $(".chcekList .browser");
+		if(browser == null){
+			dom.addClass("error")
+			msg = "请使用<a href='http://download.firefox.com.cn/releases/stub/official/zh-CN/Firefox-latest.exe'>Firefox 24+</a> 或者 <a href='https://www.google.com/intl/zh-CN/chrome/browser/'>Chrome 29+</a>";
+		}else{
+			dom.addClass("success");
+			msg = browser+"正常";
+			this.setCount();
+		}
+
+		$(".result",dom).html(msg);
+	},
+	websocket:function(){
+		var msg = "正在检测...";
+		WebSocket = window.WebSocket || window.MozWebSocket;
+
+		var dom = $(".chcekList .websocket");
+		if(WebSocket === undefined){
+			dom.addClass("error")
+			msg = "浏览器不支持webSocket,请更换更高版本的浏览器";
+		}else{
+			dom.addClass("success");
+			msg = "正常";
+			this.setCount();
+		}
+		$(".result",dom).text(msg);
+	},
+
+	webrtc:function(){
+		window.URL = window.URL|| window.webkitURL|| window.mozURL|| window.msURL;
+		window.RTCPeerConnection = window.mozRTCPeerConnection || window.RTCPeerConnection || window.webkitRTCPeerConnection ;
+		window.RTCSessionDescription  = window.mozRTCSessionDescription ||  window.RTCSessionDescription ;
+		window.RTCIceCandidate = window.mozRTCIceCandidate || window.RTCIceCandidate;
+
+		var dom = $(".chcekList .webrtc");
+		if(URL === undefined){
+			dom.addClass("error")
+			msg = "浏览器不支持window.URL,请更换更高版本的浏览器";
+			$(".result",dom).text(msg);
+			return false;
+		}
+
+		if(RTCPeerConnection === undefined){
+			dom.addClass("error")
+			msg = "浏览器不支持RTCPeerConnection,请在about:config开启或更换高版本的浏览器 ";
+			$(".result",dom).text(msg);
+			return false;
+		}
+
+		if(RTCSessionDescription === undefined){
+			dom.addClass("error")
+			msg = "浏览器不支持 RTCSessionDescription,请更换更高版本<b></b>的浏览器";
+			$(".result",dom).text(msg);
+			return false;
+		}
+
+		if(RTCIceCandidate === undefined){
+			dom.addClass("error")
+			msg = "浏览器不支持RTCIceCandidate,请在about:config开启或更换高版本的浏览器";
+			$(".result",dom).text(msg);
+			return false;
+		}
+
+		dom.addClass("success");
+		msg = "正常";
+		$(".result",dom).text(msg);
+		this.setCount();
+	},
+	video:function(){
+		navigator.getUserMedia = navigator.getUserMedia|| navigator.webkitGetUserMedia|| navigator.mozGetUserMedia|| navigator.msGetUserMedia;
+		var dom = $(".chcekList .video");
+		dom.removeClass().addClass("video");
+
+		if(navigator.getUserMedia === undefined){
+			dom.addClass("error")
+			msg = "浏览器不支持getUserMedia,请在about:config开启或更换高版本的浏览器";
+			$(".result",dom).text(msg);
+			return false;
+		}
+
+		var t = null;
+
+		navigator.getUserMedia({video:true,audio:true}, 
+			function(stream){
+
+				t && clearTimeout(t);
+
+				console.log("LOCAL:"+stream);
+				printf(stream);
+				localStream = stream;
+
+				dom.addClass("success");
+				msg = "正常";
+				$(".result",dom).text(msg);
+				CheckClinet.setCount();
+			},
+			function(error) {
+				t && clearTimeout(t);
+
+				printf(error);
+				dom.addClass("error")
+				msg = "摄像头和麦克风获取有问题，可能未被共享或者被其他程序占用 <a onclick='location.reload()'>尝试重新加载</a>";
+				$(".result",dom).html(msg);
+				return false;
+			}); 
+
+		var t = setTimeout(function(){
+			CheckClinet.video();
+		},10000)
+
+
+	}
+	
+}
+
+
+
+//-------------------------------------
+var Utils = {
+	getBrowser:function(){
+		var browser = null;
+		if($.browser.mozilla){
+			browser = "Firefox";
+		}else if(navigator.userAgent.toLowerCase().match(/chrome/) != null){
+			browser = "Chrome"; 
+		}
+		return browser;
+	}
+}
+//--------------------------------------
+var Rtc = {
+	remoteId:null,
+	call:function(obj){
+		var li = $(obj).parents("li");
+		var data = li.data("data");
+		var id = data.id;
+		this.remoteId = id;
+
+		if(localClient.browser != data.browser){
+			if(confirm("对方浏览器与您使用的不同，可能无法成功进行视频通话，是否继续？")){
+			
+			}else{
+				return false;
+			}
+		}
+
+		this.setCall();
+		setStateMessage("正在呼叫...");
+		MySocket.send({"cmd":"call","remoteId":id});
+	},
+	setCall:function(){
+		PageView.setToCall();
+	},
+	hang:function(){
+		MySocket.send({"cmd":"hang","remoteId":this.remoteId});
+		this.setHang();
+	},
+
+	setHang:function(){
+		PageView.setToHang();
+		setStateMessage("可通话");
+
+		localVideo.volume = 1;
+		remoteVideo.pause();
+		remoteVideo.src = "";
+		
+		this.remoteId = null;
+		$.each(ConnStore,function(i){
+			try{
+				var conn = ConnStore[i];
+				conn && conn.close();
+				conn = null;
+			}catch(e){
+				printf("中断错误"+i);
+			}
+		})
+
+		
+
+	}
+	
+}
+
+
+var ConnStore = {};
+function Connection(remoteId,remoteVideo){
+	this.remoteId = remoteId;
+	this.remoteVideo = remoteVideo;
+	this.rtcPeerConnection = new RTCPeerConnection(iceServer);
+	this.rtcPeerConnection.onaddstream = function(event){
+		var stream = event.stream;
+		setVideo(remoteVideo,stream);
+	}
+	this.rtcPeerConnection.onicecandidate = function(event){
+	  var candidate = event.candidate;
+	  if (candidate) {
+		MySocket.send({"cmd":"candidate","remoteId":remoteId,"data":candidate});
+	  }
+	}
+	this.rtcPeerConnection.addStream(localStream);
+	ConnStore[remoteId] =  this.rtcPeerConnection;
+}
+
+Connection.prototype.createOffer = function(){
+	var that = this;
+	this.rtcPeerConnection.createOffer(function(offer,failed){
+		if(that.rtcPeerConnection == null){
+			return;
+		}
+		that.rtcPeerConnection.setLocalDescription(offer);
+		MySocket.send({"cmd":"offer","remoteId":that.remoteId,"data":offer});
+	},function(code){
+		setStateMessage("呼叫异常中断");
+		MySocket.send({"cmd":"hang","remoteId":that.remoteId});
+		Rtc.setHang();
+	})
+
+}
+
+Connection.prototype.createAnswer = function(offer){
+	var that = this;
+	this.rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+	this.rtcPeerConnection.createAnswer(function(answer,failed){
+		if(that.rtcPeerConnection == null){
+			return;
+		}
+		that.rtcPeerConnection.setLocalDescription(answer);
+		MySocket.send({"cmd":"answer","remoteId":that.remoteId,"data":answer});
+	},function(code){
+		setStateMessage("应答异常中断");
+		MySocket.send({"cmd":"hang","remoteId":that.remoteId});
+		Rtc.setHang();
+	})
+
+}
+
+function setStateMessage(msg){
+	$(".localInfo .message").text(msg)
+}
+
+//---------------------------------
+//---------------------------------
+function sendMsg() {
+	var m = $('#writeMsg').val();
+	if($.trim(m) == ""){
+		return;
+	}
+
+    MySocket.send({"cmd":"text","remoteId":null,"data":m+"\n"});
+    $('#writeMsg').val("");
+}
+
+function showMsg(msg) {
+	document.getElementById('showMsg').scrollTop = document.getElementById("showMsg").scrollHeight;
+    $('#showMsg').val($('#showMsg').val()+ msg);
+}
+
+  
+//-->
+</script>
+<body>
+
+<div class="loginPage">
+      <div class="form-signin">
+        <h1 class="form-signin-heading">WebRTC</h1>
+		<div style="display:none" class="loginDiv form-inline">
+        <input type="text" class="name input-xlarge" placeholder="请输入用户名(建议采用姓名)" class="">
+        <button class="btn btn-primary btn-large btnLogin" type="submit">登录</button>
+		<p class="text-error" style="padding-top:5px">建议不要同时打开多个窗口或页签登录</p>
+		</div>
+		<p>正在检测设备:</p>
+		<table class="table  table-bordered chcekList">
+			<tr class="browser">
+				<td width="100">浏览器</td>
+				<td class="result">正在检测...</td>
+			</tr>
+			<tr class="websocket">
+				<td width="100">WebScoket支持</td>
+				<td class="result">正在检测...</td>
+			</tr>
+			<tr class="webrtc">
+				<td width="100">WebRTC支持</td>
+				<td class="result">正在检测...</td>
+			</tr>
+			<tr class="video">
+				<td width="100">音视频支持</td>
+				<td class="result">正在检测...</td>
+			</tr>
+		</table>
+		
+	  </div>
+</div> 
+
+<div class="main" style="display:none">
+	<div class="navbar">
+      <div class="navbar-inner">
+        <div class="container-fluid">
+          <button data-target=".nav-collapse" data-toggle="collapse" class="btn btn-navbar" type="button">
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+          <a href="#" class="brand">KEDACOM WebRTC </a>
+          <div class="nav-collapse collapse">
+            <p class="navbar-text pull-right">
+			   <a class="navbar-link btnLogout" href="#">退出<b></b></a>
+            </p>
+          </div><!--/.nav-collapse -->
+        </div>
+      </div>
+    </div>
+	<div>
+
+
+	<div class="row-fluid">
+		<div class="span3">
+          <div class="well sidebar-nav">
+            <ul class="nav nav-list localInfo">
+              <li class="nav-header">本地信息</li>
+              <li>用户名：<span class="name"></span></li>
+              <li>浏览器：<span class="browser"></span></li>
+			  <li>IP地址：<span class="ip"></span></li>
+			  <li>状态：<span class="message">正常</span></li>
+            </ul>
+		</div>
+		<p style="float:right"><a class="btn btn-danger hang" href="#" style="display:none">挂断</a></p>
+		 <div class="well sidebar-nav">
+			<ul class="nav nav-list"><li class="nav-header">可呼叫列表</li></ul>
+			<ul class="nav nav-list callList">
+            </ul>
+			<ul class="nav nav-list"><li class="nav-header">通话中列表</li></ul>
+			<ul class="nav nav-list busyList">
+            </ul>
+          </div><!--/.well -->
+
+        </div>
+
+		<div class="span3">
+		<p>本地视频源</p>
+		<p><video id="localVideo" width="100%" height="180" poster="default.png"></video></p>
+		<p>发消息</p>
+		<div>
+		<textarea id="showMsg" style="width:220px; height: 80px;resize:none;" readonly></textarea>
+		<div class="form-inline"><input type="text" id="writeMsg" style="width:148px"></input>
+		<input type="button" class="btn btn-primary" value="发消息" onclick="sendMsg()"></input></div>
+		</div>
+		</div>
+
+		<div class="span6">
+		<p>远端视频源</p>
+		<p><video id="remoteVideo"width="100%" height="354" poster="default.png"></video></p>
+		</div>
+		</div>
+
+	</div>
+</div>
+
+
+</body>
+</html>

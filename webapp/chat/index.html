@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Index</title>
+<script type="text/javascript">
+function get_appropriate_ws_url() {
+	var pcol;
+	var u = document.URL;
+
+	/*
+	 * We open the websocket encrypted if this page came on an
+	 * https:// url itself, otherwise unencrypted
+	 */
+
+	if (u.substring(0, 5) == "https") {
+		pcol = "wss://";
+		u = u.substr(8);
+	} else {
+		pcol = "ws://";
+		if (u.substring(0, 4) == "http")
+			u = u.substr(7);
+	}
+
+	u = u.split('/');
+
+	return pcol + u[0];
+}
+
+
+var serverUrl = get_appropriate_ws_url() + "/chat.do";
+var ws = null;
+function startWebSocket() {
+	if ('WebSocket' in window)
+		ws = new WebSocket(serverUrl);
+	else if ('MozWebSocket' in window)
+		ws = new MozWebSocket(serverUrl);
+	else
+		alert("not support");
+	
+	ws.onmessage = function(evt) {
+		showMsg("接收到消息：" + evt.data);
+	};
+	
+	ws.onclose = function(evt) {
+		if(evt.data) {
+			showMsg(evt.data + " 已经下线");
+		}
+	};
+	
+	ws.onopen = function(evt) {
+		if(evt.data) {
+			showMsg(evt.data + " 已经上线");
+		}
+	};
+}
+
+function sendMsg() {
+	ws.send($('writeMsg').value);
+	$('writeMsg').value = "";
+}
+
+function showMsg(msg) {
+	$('showMsg').value += "\n" + msg;
+}
+
+function $(id) {
+	return document.getElementById(id);
+}
+</script>
+</head>
+<body onload="startWebSocket();">
+	打开两个页面模拟聊天室功能<br /><br />
+	<input type="text" id="writeMsg"></input>
+	<input type="button" value="send" onclick="sendMsg()"></input>
+	<textarea id="showMsg" style="width:100%; height: 300px"></textarea>
+</body>
+</html>
